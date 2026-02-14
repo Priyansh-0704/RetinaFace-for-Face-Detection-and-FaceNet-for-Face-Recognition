@@ -1,0 +1,20 @@
+# Virtual Environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated embeddings
+embeddings/embeddings.pkl
+
+# Model weights
+.deepface/
+*.h5
+
+# VS Code settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

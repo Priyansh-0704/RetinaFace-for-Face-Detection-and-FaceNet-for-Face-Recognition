@@ -1,0 +1,7 @@
+retina-face
+keras-facenet
+opencv-python
+numpy==1.23.5
+tensorflow==2.10.0
+scikit-learn
+pillow
