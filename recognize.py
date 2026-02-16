@@ -12,14 +12,11 @@ DISPLAY_WIDTH = 400
 EMBEDDING_PATH = "embeddings/embeddings.pkl"
 
 
-# Load Models
 model = FaceNet()
 
 with open(EMBEDDING_PATH, "rb") as f:
     embeddings_db = pickle.load(f)
 
-
-# Helper Functions
 
 def resize_for_display(image, width):
     """Resize image while keeping aspect ratio."""
@@ -79,8 +76,6 @@ def draw_label(image, text, x1, y1, x2, y2):
     )
 
 
-# Main Logic
-
 def main():
 
     image = cv2.imread(IMAGE_PATH)
@@ -93,7 +88,6 @@ def main():
 
     total_start = time.time()
 
-    # Face detection timing
     detect_start = time.time()
     detections = RetinaFace.detect_faces(image)
     detect_end = time.time()
@@ -107,24 +101,20 @@ def main():
     for key in detections:
         x1, y1, x2, y2 = detections[key]["facial_area"]
 
-        # Ensure bounding box is within image limits
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(img_w, x2), min(img_h, y2)
 
         face = image[y1:y2, x1:x2]
 
-        # Skip very small detections
         if face.shape[0] < 40 or face.shape[1] < 40:
             continue
 
         face = cv2.resize(face, (160, 160))
 
-        # Embedding timing
         embed_start = time.time()
         embedding = model.embeddings([face])[0]
         embed_end = time.time()
 
-        # Matching timing
         match_start = time.time()
         name, score = recognize_face(embedding)
         match_end = time.time()
