@@ -1,67 +1,48 @@
 import os
 import cv2
 import pickle
+import numpy as np
 from retinaface import RetinaFace
 from keras_facenet import FaceNet
 
 DATASET_DIR = "dataset"
-OUTPUT_FILE = "embeddings/embeddings.pkl"
+OUT_PATH = "embeddings/embeddings.pkl"
 
-model = FaceNet()
+embedder = FaceNet()
 
-
-def get_face_embedding(image):
-    detections = RetinaFace.detect_faces(image)
-
-    if not isinstance(detections, dict):
+def get_embedding(img):
+    dets = RetinaFace.detect_faces(img)
+    if not isinstance(dets, dict):
         return None
+    x1, y1, x2, y2 = list(dets.values())[0]["facial_area"]
+    face = img[y1:y2, x1:x2]
+    if face.size == 0:
+        return None
+    face = cv2.resize(face, (160,160))
+    return embedder.embeddings([face])[0]
 
-    # take first detected face
-    for key in detections:
-        x1, y1, x2, y2 = detections[key]["facial_area"]
+db = {}
 
-        face = image[y1:y2, x1:x2]
+for person in os.listdir(DATASET_DIR):
+    pdir = os.path.join(DATASET_DIR, person)
+    if not os.path.isdir(pdir):
+        continue
 
-        if face.size == 0:
-            return None
-
-        face = cv2.resize(face, (160, 160))
-        embedding = model.embeddings([face])[0]
-        return embedding
-
-    return None
-
-
-def generate_embeddings():
-    embeddings_data = {}
-
-    for person in os.listdir(DATASET_DIR):
-        person_path = os.path.join(DATASET_DIR, person)
-
-        if not os.path.isdir(person_path):
+    embs = []
+    for imgname in os.listdir(pdir):
+        img = cv2.imread(os.path.join(pdir, imgname))
+        if img is None:
             continue
+        emb = get_embedding(img)
+        if emb is not None:
+            embs.append(emb)
 
-        embeddings_data[person] = []
+    if embs:
+        db[person] = np.mean(embs, axis=0)
+        print(f"{person}: {len(embs)} images")
 
-        for img_name in os.listdir(person_path):
-            img_path = os.path.join(person_path, img_name)
-            img = cv2.imread(img_path)
+os.makedirs("embeddings", exist_ok=True)
+with open(OUT_PATH, "wb") as f:
+    pickle.dump(db, f)
 
-            if img is None:
-                continue
-
-            emb = get_face_embedding(img)
-
-            if emb is not None:
-                embeddings_data[person].append(emb)
-
-        print(f"{person}: {len(embeddings_data[person])} embeddings created")
-
-    with open(OUTPUT_FILE, "wb") as f:
-        pickle.dump(embeddings_data, f)
-
-    print("Embeddings saved successfully.")
-
-
-if __name__ == "__main__":
-    generate_embeddings()
+print("Embeddings saved")

@@ -1,6 +1,7 @@
 import cv2
 import time
 import pickle
+import numpy as np
 from retinaface import RetinaFace
 from keras_facenet import FaceNet
 from sklearn.metrics.pairwise import cosine_similarity
@@ -11,33 +12,29 @@ SIMILARITY_THRESHOLD = 0.6
 DISPLAY_WIDTH = 400
 EMBEDDING_PATH = "embeddings/embeddings.pkl"
 
-
 model = FaceNet()
 
 with open(EMBEDDING_PATH, "rb") as f:
     embeddings_db = pickle.load(f)
 
-
 def resize_for_display(image, width):
-    """Resize image while keeping aspect ratio."""
     h, w = image.shape[:2]
     scale = width / w
-    new_height = int(h * scale)
-    return cv2.resize(image, (width, new_height))
+    return cv2.resize(image, (width, int(h * scale)))
 
 
 def recognize_face(embedding):
-    """Find best match using cosine similarity."""
+    """
+    Uses MEAN embedding per person (fast + correct)
+    """
     best_name = "Unknown"
-    best_score = -1
+    best_score = -1.0
 
-    for person, stored_embeddings in embeddings_db.items():
-        for stored_emb in stored_embeddings:
-            score = cosine_similarity([embedding], [stored_emb])[0][0]
-
-            if score > best_score:
-                best_score = score
-                best_name = person
+    for person, ref_emb in embeddings_db.items():
+        score = cosine_similarity([embedding], [ref_emb])[0][0]
+        if score > best_score:
+            best_score = score
+            best_name = person
 
     if best_score < SIMILARITY_THRESHOLD:
         return "Unknown", best_score
@@ -46,29 +43,27 @@ def recognize_face(embedding):
 
 
 def draw_label(image, text, x1, y1, x2, y2):
-    """Draw bounding box and label safely."""
     cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    label = text
-    (text_w, text_h), _ = cv2.getTextSize(
-        label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+    (tw, th), _ = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
     )
 
-    text_x = max(10, x1)
-    text_y = max(text_h + 10, y1 - 10)
+    tx = max(10, x1)
+    ty = max(th + 10, y1 - 10)
 
     cv2.rectangle(
         image,
-        (text_x, text_y - text_h - 5),
-        (text_x + text_w, text_y + 5),
+        (tx, ty - th - 5),
+        (tx + tw, ty + 5),
         (0, 255, 0),
         -1
     )
 
     cv2.putText(
         image,
-        label,
-        (text_x, text_y),
+        text,
+        (tx, ty),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
         (0, 0, 0),
@@ -77,7 +72,6 @@ def draw_label(image, text, x1, y1, x2, y2):
 
 
 def main():
-
     image = cv2.imread(IMAGE_PATH)
 
     if image is None:
@@ -98,8 +92,8 @@ def main():
 
     img_h, img_w = image.shape[:2]
 
-    for key in detections:
-        x1, y1, x2, y2 = detections[key]["facial_area"]
+    for det in detections.values():
+        x1, y1, x2, y2 = det["facial_area"]
 
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(img_w, x2), min(img_h, y2)
@@ -119,10 +113,8 @@ def main():
         name, score = recognize_face(embedding)
         match_end = time.time()
 
-        display_name = name.replace("_", " ").title()
-        label_text = f"{display_name} ({score:.2f})"
-
-        draw_label(image, label_text, x1, y1, x2, y2)
+        label = f"{name.replace('_',' ').title()} ({score:.2f})"
+        draw_label(image, label, x1, y1, x2, y2)
 
     total_end = time.time()
 

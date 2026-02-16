@@ -1,118 +1,66 @@
-import os
-import cv2
-import pickle
-import numpy as np
+import os, cv2, time, pickle, numpy as np
 from retinaface import RetinaFace
 from keras_facenet import FaceNet
-from sklearn.metrics.pairwise import cosine_similarity
 
-SIMILARITY_THRESHOLD = 0.6
-TEST_PATH = "test_images"
+TEST_DIR = "test_images"
+SIM_THRESHOLD = 0.6
+DET_SCALE = 0.5
 
 embedder = FaceNet()
+with open("embeddings/embeddings.pkl","rb") as f:
+    db = pickle.load(f)
 
-with open("embeddings/embeddings.pkl", "rb") as f:
-    embeddings_dict = pickle.load(f)
+def cosine(a,b):
+    return np.dot(a,b)/(np.linalg.norm(a)*np.linalg.norm(b))
 
+correct = total = 0
+det_t, emb_t, match_t = [], [], []
+latencies = []
 
-def recognize_face(face_embedding):
-    best_match = None
-    highest_similarity = -1
-
-    for person_name, embeddings in embeddings_dict.items():
-        for emb in embeddings:
-            similarity = cosine_similarity(
-                [face_embedding], [emb]
-            )[0][0]
-
-            if similarity > highest_similarity:
-                highest_similarity = similarity
-                best_match = person_name
-
-    if highest_similarity > SIMILARITY_THRESHOLD:
-        return best_match
-    else:
-        return "Unknown"
-
-
-total = 0
-correct = 0
-
-known_total = 0
-known_correct = 0
-
-unknown_total = 0
-unknown_correct = 0
-
-per_person_results = {}
-
-for person in os.listdir(TEST_PATH):
-
-    person_folder = os.path.join(TEST_PATH, person)
-
-    if not os.path.isdir(person_folder):
+for person in os.listdir(TEST_DIR):
+    pdir = os.path.join(TEST_DIR, person)
+    if not os.path.isdir(pdir):
         continue
 
-    person_correct = 0
-    person_total = 0
-
-    for image_name in os.listdir(person_folder):
-
-        image_path = os.path.join(person_folder, image_name)
-        img = cv2.imread(image_path)
-
+    for imgname in os.listdir(pdir):
+        img = cv2.imread(os.path.join(pdir,imgname))
         if img is None:
             continue
 
-        detections = RetinaFace.detect_faces(img)
+        t0 = time.time()
+        small = cv2.resize(img,None,fx=DET_SCALE,fy=DET_SCALE)
+        dets = RetinaFace.detect_faces(small)
+        det_t.append(time.time()-t0)
 
-        if not isinstance(detections, dict):
+        if not isinstance(dets,dict):
             continue
 
-        for key in detections.keys():
+        x1,y1,x2,y2 = list(dets.values())[0]["facial_area"]
+        x1,y1,x2,y2 = [int(v/DET_SCALE) for v in (x1,y1,x2,y2)]
+        face = img[y1:y2,x1:x2]
+        face = cv2.resize(face,(160,160))
 
-            x1, y1, x2, y2 = detections[key]['facial_area']
-            face = img[y1:y2, x1:x2]
-            face = cv2.resize(face, (160, 160))
+        t1 = time.time()
+        emb = embedder.embeddings([face])[0]
+        emb_t.append(time.time()-t1)
 
-            embedding = embedder.embeddings([face])[0]
-            predicted = recognize_face(embedding)
+        t2 = time.time()
+        scores = {n:cosine(emb,r) for n,r in db.items()}
+        name = max(scores,key=scores.get)
+        match_t.append(time.time()-t2)
 
-            total += 1
-            person_total += 1
+        pred = name if scores[name]>SIM_THRESHOLD else "Unknown"
+        if pred == person:
+            correct += 1
+        total += 1
 
-            if person.lower() == "unknown":
-                unknown_total += 1
+        latencies.append(det_t[-1]+emb_t[-1]+match_t[-1])
 
-                if predicted == "Unknown":
-                    correct += 1
-                    unknown_correct += 1
-                    person_correct += 1
-
-            else:
-                known_total += 1
-
-                if predicted == person:
-                    correct += 1
-                    known_correct += 1
-                    person_correct += 1
-
-    if person_total > 0:
-        per_person_results[person] = round(
-            (person_correct / person_total) * 100, 2
-        )
-
-overall_accuracy = (correct / total) * 100 if total > 0 else 0
-known_accuracy = (known_correct / known_total) * 100 if known_total > 0 else 0
-unknown_accuracy = (unknown_correct / unknown_total) * 100 if unknown_total > 0 else 0
-
-print("\n--- Evaluation Results ---")
-print("Total Samples Evaluated:", total)
-print("Overall Accuracy:", round(overall_accuracy, 2), "%")
-
-print("\nKnown Faces Accuracy:", round(known_accuracy, 2), "%")
-print("Unknown Detection Accuracy:", round(unknown_accuracy, 2), "%")
-
-print("\nPer Person Accuracy:")
-for person, acc in per_person_results.items():
-    print(person, ":", acc, "%")
+print("\n=== PERFORMANCE REPORT ===")
+print("Accuracy:", round(correct/total*100,2),"%")
+print("Avg Detection Time (ms):", round(np.mean(det_t)*1000,2))
+print("Avg Embedding Time (ms):", round(np.mean(emb_t)*1000,2))
+print("Avg Matching Time (ms):", round(np.mean(match_t)*1000,2))
+print("Total Pipeline (ms):", round(np.mean(latencies)*1000,2))
+print("Avg Latency (s):", round(np.mean(latencies),3))
+print("Throughput (fps):", round(1/np.mean(latencies),2))
