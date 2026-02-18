@@ -6,16 +6,22 @@ from retinaface import RetinaFace
 from keras_facenet import FaceNet
 from sklearn.metrics.pairwise import cosine_similarity
 
-
 IMAGE_PATH = "test_images/test1.jpg"
+EMBEDDING_PATH = "embeddings/embeddings.pkl"
+
 SIMILARITY_THRESHOLD = 0.6
 DISPLAY_WIDTH = 400
-EMBEDDING_PATH = "embeddings/embeddings.pkl"
+
+DET_SCALE = 0.5
+MIN_FACE_SIZE = 40
 
 model = FaceNet()
 
+_ = model.embeddings([np.zeros((160, 160, 3), dtype=np.uint8)])
+
 with open(EMBEDDING_PATH, "rb") as f:
     embeddings_db = pickle.load(f)
+
 
 def resize_for_display(image, width):
     h, w = image.shape[:2]
@@ -24,9 +30,6 @@ def resize_for_display(image, width):
 
 
 def recognize_face(embedding):
-    """
-    Uses MEAN embedding per person (fast + correct)
-    """
     best_name = "Unknown"
     best_score = -1.0
 
@@ -73,7 +76,6 @@ def draw_label(image, text, x1, y1, x2, y2):
 
 def main():
     image = cv2.imread(IMAGE_PATH)
-
     if image is None:
         print("Image not found.")
         return
@@ -82,9 +84,10 @@ def main():
 
     total_start = time.time()
 
-    detect_start = time.time()
-    detections = RetinaFace.detect_faces(image)
-    detect_end = time.time()
+    det_start = time.time()
+    small = cv2.resize(image, None, fx=DET_SCALE, fy=DET_SCALE)
+    detections = RetinaFace.detect_faces(small)
+    det_end = time.time()
 
     if not isinstance(detections, dict):
         print("No face detected.")
@@ -92,39 +95,46 @@ def main():
 
     img_h, img_w = image.shape[:2]
 
-    for det in detections.values():
-        x1, y1, x2, y2 = det["facial_area"]
+    det = list(detections.values())[0]
+    x1, y1, x2, y2 = det["facial_area"]
 
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(img_w, x2), min(img_h, y2)
+    x1, y1, x2, y2 = [int(v / DET_SCALE) for v in (x1, y1, x2, y2)]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(img_w, x2), min(img_h, y2)
 
-        face = image[y1:y2, x1:x2]
+    face = image[y1:y2, x1:x2]
 
-        if face.shape[0] < 40 or face.shape[1] < 40:
-            continue
+    if face.shape[0] < MIN_FACE_SIZE or face.shape[1] < MIN_FACE_SIZE:
+        print("Face too small.")
+        return
 
-        face = cv2.resize(face, (160, 160))
+    face = cv2.resize(face, (160, 160))
 
-        embed_start = time.time()
-        embedding = model.embeddings([face])[0]
-        embed_end = time.time()
+    emb_start = time.time()
+    embedding = model.embeddings([face])[0]
+    emb_end = time.time()
 
-        match_start = time.time()
-        name, score = recognize_face(embedding)
-        match_end = time.time()
+    match_start = time.time()
+    name, score = recognize_face(embedding)
+    match_end = time.time()
 
-        label = f"{name.replace('_',' ').title()} ({score:.2f})"
-        draw_label(image, label, x1, y1, x2, y2)
+    label = f"{name.replace('_',' ').title()} ({score:.2f})"
+    draw_label(image, label, x1, y1, x2, y2)
 
     total_end = time.time()
 
-    print("\n--- Performance Metrics ---")
-    print("Detection Time :", round(detect_end - detect_start, 4), "sec")
-    print("Embedding Time :", round(embed_end - embed_start, 4), "sec")
-    print("Matching Time  :", round(match_end - match_start, 6), "sec")
-    print("Total Time     :", round(total_end - total_start, 4), "sec")
+    det_time = det_end - det_start
+    emb_time = emb_end - emb_start
+    match_time = match_end - match_start
+    pipeline_time = det_time + emb_time + match_time
 
-    cv2.imshow("Result", image)
+    print(f"Detection Time        : {det_time:.4f} sec")
+    print(f"Embedding Time        : {emb_time:.4f} sec")
+    print(f"Matching Time         : {match_time:.6f} sec")
+    print(f"Total Pipeline Time   : {pipeline_time:.4f} sec")
+    print(f"Throughput (fps)      : {1 / pipeline_time:.2f}")
+
+    cv2.imshow("RetinaFace + FaceNet (Recognize)", image)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
